@@ -26,6 +26,7 @@ export default function App() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
+  const [liveLogs, setLiveLogs] = useState<string[]>([])
   
   const [detectedRegions, setDetectedRegions] = useState<Region[]>([])
   const [activeRegion, setActiveRegion] = useState<string | null>(null)
@@ -35,6 +36,16 @@ export default function App() {
     "Paint": 15, "Stone cladding": 45, "Tiles": 30, "Texture finish": 20,
     "Glass railing": 60, "Metal railing": 40, "Panels": 35
   })
+
+  // Convert file to base64 for websocket transmission
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = error => reject(error);
+    });
+  }
 
   const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -46,28 +57,53 @@ export default function App() {
     setDetectedRegions([])
     setActiveRegion(null)
     setMaterialMapping({})
-
-    const formData = new FormData()
-    formData.append("file", file)
+    // Initialize logs with terminal-style start
+    setLiveLogs(["> INITIALIZING LIVE STREAM..."])
 
     try {
-      const response = await fetch("http://localhost:8000/api/analyze", {
-        method: "POST",
-        body: formData,
-      })
+      const base64Image = await fileToBase64(file)
+      
+      // Open WebSocket connection
+      const ws = new WebSocket("ws://localhost:8000/ws/analyze")
 
-      if (!response.ok) throw new Error((await response.json()).detail || "Failed to analyze image")
-
-      const data = await response.json()
-      if (data.status === "success") {
-        setDetectedRegions(data.estimations.regions)
-        if (data.estimations.regions.length > 0) setActiveRegion(data.estimations.regions[0].name)
+      ws.onopen = () => {
+        setLiveLogs(prev => [...prev, "Connection established. Transmitting image data..."])
+        ws.send(JSON.stringify({ image: base64Image }))
       }
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data)
+
+        if (data.type === "log") {
+          // Push new log to the stream
+          setLiveLogs(prev => [...prev, data.message])
+        } 
+        else if (data.type === "success") {
+          // Set final results
+          setDetectedRegions(data.estimations.regions)
+          if (data.estimations.regions.length > 0) setActiveRegion(data.estimations.regions[0].name)
+          setIsAnalyzing(false)
+          ws.close()
+        } 
+        else if (data.type === "error") {
+          setValidationError(data.message)
+          setSelectedImage(null)
+          setIsAnalyzing(false)
+          ws.close()
+        }
+      }
+
+      ws.onerror = () => {
+        setValidationError("WebSocket connection failed. AI services are unreachable.")
+        setSelectedImage(null)
+        setIsAnalyzing(false)
+      }
+
     } catch (error: any) {
-      setValidationError(error.message)
-      setSelectedImage(null)
-    } finally {
+      console.error(error);
+      setValidationError("Failed to read image file. Try again.")
       setIsAnalyzing(false)
+    } finally {
       event.target.value = ''
     }
   }
@@ -87,6 +123,7 @@ export default function App() {
     setValidationError(null)
     setActiveRegion(null)
     setMaterialMapping({})
+    setLiveLogs([])
   }
 
   const estimateData = useMemo(() => {
@@ -108,15 +145,9 @@ export default function App() {
       grandTotal += totalCost
 
       return {
-        region: regionName,
-        material,
-        area,
-        quantity: totalQuantity.toFixed(1),
-        unit: metrics.unit,
-        wastagePct: (metrics.wastage * 100).toFixed(0),
-        materialCost,
-        laborCost,
-        totalCost
+        region: regionName, material, area, quantity: totalQuantity.toFixed(1),
+        unit: metrics.unit, wastagePct: (metrics.wastage * 100).toFixed(0),
+        materialCost, laborCost, totalCost
       }
     })
 
@@ -147,7 +178,7 @@ export default function App() {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
           
-          {/* Left Column: Image Area ONLY */}
+          {/* Left Column: Visualization */}
           <div className="col-span-1 lg:col-span-7 space-y-6">
             <Card className="shadow-sm border-slate-200">
               <CardHeader className="pb-4">
@@ -164,33 +195,54 @@ export default function App() {
               
               <CardContent>
                 {selectedImage ? (
-                  <div className="relative w-full h-[450px] sm:h-[600px] bg-slate-900 rounded-lg overflow-hidden border border-slate-200 group flex items-center justify-center">
-                    <img src={selectedImage} alt="Uploaded property" className={`w-full h-full object-contain transition-opacity duration-500 ${isAnalyzing ? 'opacity-50 blur-sm' : 'opacity-100'}`} />
-                    {isAnalyzing && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
-                        <svg className="animate-spin h-10 w-10 mb-4 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                        <span className="font-medium tracking-wider">VALIDATING & MAPPING...</span>
+                  /* PRD-Strict: Container to display image and logs separately */
+                  <div className="space-y-4">
+                    {/* 1. Image View Container (Restored visibility) */}
+                    <div className="relative w-full h-[350px] sm:h-[450px] bg-slate-900 rounded-lg overflow-hidden border border-slate-200 group flex items-center justify-center">
+                      <img 
+                        src={selectedImage} 
+                        alt="Uploaded property" 
+                        // Removed blur-sm and opacity-50. This is always fully visible.
+                        className="w-full h-full object-contain" 
+                      />
+                      
+                      {/* Spinner Overlay (Only spinner, no logs) over image while analyzing */}
+                      {isAnalyzing && (
+                        <div className="absolute inset-0 flex items-center justify-center p-8 w-full h-full bg-slate-900/40">
+                          <svg className="animate-spin h-10 w-10 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        </div>
+                      )}
+
+                      <Button variant="destructive" size="icon" className="absolute top-4 right-4 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity" onClick={removeImage} disabled={isAnalyzing}>
+                        X
+                      </Button>
+                    </div>
+
+                    {/* 2. Logs View Container (Moved to empty space below image, block element) */}
+                    {isAnalyzing && liveLogs.length > 0 && (
+                      <div className="w-full bg-black/80 rounded-md p-4 border border-slate-700 font-mono text-xs text-emerald-400 h-32 overflow-y-auto flex flex-col gap-1 text-left animate-in fade-in-0 slide-in-from-bottom-5">
+                        {liveLogs.map((log, idx) => (
+                          <span key={idx} className="animate-pulse">{`> ${log}`}</span>
+                        ))}
                       </div>
                     )}
-                    <Button variant="destructive" size="icon" className="absolute top-4 right-4 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity" onClick={removeImage} disabled={isAnalyzing}>
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                    </Button>
                   </div>
+
                 ) : (
-                  <div className="h-[450px] sm:h-[600px] w-full border-2 border-dashed border-slate-300 rounded-lg flex flex-col items-center justify-center bg-slate-50 hover:bg-slate-100 p-6 text-center transition-colors">
-                    <Label htmlFor="file-upload" className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-slate-900 text-slate-50 hover:bg-slate-800 h-10 px-4 py-2 cursor-pointer">
+                  <div className="h-[350px] sm:h-[450px] w-full border-2 border-dashed border-slate-300 rounded-lg flex flex-col items-center justify-center bg-slate-50 hover:bg-slate-100 p-6 text-center transition-colors hover:border-slate-400">
+                    <Label htmlFor="file-upload" className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-slate-900 text-slate-50 hover:bg-slate-800 h-10 px-4 py-2 cursor-pointer transition-colors shadow">
                       Select Exterior Image
                       <Input id="file-upload" type="file" accept="image/*" className="sr-only" onChange={handleImageUpload} />
                     </Label>
+                    <p className="mt-2 text-xs text-slate-400">Supported formats: JPG, PNG, WEBP</p>
                   </div>
                 )}
               </CardContent>
             </Card>
           </div>
 
-          {/* Right Column: Material Mapping & Dynamic Cost Estimation */}
+          {/* Right Column: Mapping & Estimation */}
           <div className="col-span-1 lg:col-span-5 space-y-6">
-            
             <Card className="shadow-sm border-slate-200">
               <CardHeader>
                 <CardTitle>Material Mapping</CardTitle>
@@ -241,7 +293,6 @@ export default function App() {
                       <div key={idx} className="p-4 bg-white border border-slate-100 rounded-lg shadow-sm space-y-3">
                         <div className="flex justify-between items-center border-b border-slate-100 pb-2">
                           <span className="font-semibold text-slate-800">{item.region} <span className="text-slate-400 font-normal">| {item.material}</span></span>
-                          {/* Updated to INR format */}
                           <span className="font-bold text-emerald-600">₹{item.totalCost.toLocaleString('en-IN', {maximumFractionDigits: 2})}</span>
                         </div>
                         
@@ -262,12 +313,10 @@ export default function App() {
                           </div>
                           <div>
                             <span className="block text-slate-400">Material Cost</span>
-                            {/* Updated to INR format */}
                             <span className="font-medium text-slate-800">₹{item.materialCost.toLocaleString('en-IN', {maximumFractionDigits: 2})}</span>
                           </div>
                           <div>
                             <span className="block text-slate-400">Labor Cost</span>
-                            {/* Updated to INR format */}
                             <span className="font-medium text-slate-800">₹{item.laborCost.toLocaleString('en-IN', {maximumFractionDigits: 2})}</span>
                           </div>
                         </div>
@@ -276,7 +325,6 @@ export default function App() {
 
                     <div className="flex items-center justify-between pt-4 text-xl font-bold text-slate-900 border-t-2 border-slate-200">
                       <span>Grand Total</span>
-                      {/* Updated to INR format */}
                       <span>₹{estimateData.grandTotal.toLocaleString('en-IN', {maximumFractionDigits: 2})}</span>
                     </div>
 
