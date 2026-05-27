@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs" 
@@ -36,6 +36,12 @@ export default function App() {
   
   const [redesignedImage, setRedesignedImage] = useState<string | null>(null)
   const [isGeneratingVisual, setIsGeneratingVisual] = useState(false)
+  
+  // Tab State for auto-switching
+  const [activeTab, setActiveTab] = useState<string>("original")
+
+  // Dark Mode State
+  const [isDarkMode, setIsDarkMode] = useState(false)
 
   const [customRates, setCustomRates] = useState<Record<string, number>>({
     "Paint": 15, "Stone cladding": 45, "Tiles": 30, "Texture finish": 20,
@@ -43,6 +49,15 @@ export default function App() {
   })
 
   const wsRef = useRef<WebSocket | null>(null)
+
+  // Trigger Tailwind dark mode on the HTML element
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+  }, [isDarkMode])
 
   const compressImage = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -99,6 +114,7 @@ export default function App() {
     setActiveRegion(null)
     setMaterialMapping({})
     setRedesignedImage(null) 
+    setActiveTab("original")
     setLiveLogs(["> INITIALIZING LIVE STREAM...", "> Compressing image for fast upload..."])
 
     try {
@@ -120,7 +136,8 @@ export default function App() {
         } 
         else if (data.type === "success") {
           setDetectedRegions(data.estimations.regions)
-          if (data.estimations.regions.length > 0) setActiveRegion(data.estimations.regions[0].name)
+          const firstValid = data.estimations.regions.find((r: Region) => r.area_sqft > 0)
+          if (firstValid) setActiveRegion(firstValid.name)
           setIsAnalyzing(false)
           ws.close()
         } 
@@ -179,7 +196,9 @@ export default function App() {
       
       const data = await res.json()
       setRedesignedImage(data.redesigned_image)
-      document.getElementById('tab-redesign')?.click()
+      
+      // Auto-switch to the redesign tab
+      setActiveTab("redesign")
 
     } catch (error: any) {
       setValidationError(error.message)
@@ -196,22 +215,37 @@ export default function App() {
     const downloadBtn = document.getElementById('download-btn')
     if (downloadBtn) downloadBtn.style.display = 'none'
 
+    // BULLETPROOF SCROLL EXPANSION: Safely remove only the constraints so the grid doesn't collapse
     let originalClasses = "";
     if (scrollContainer) {
       originalClasses = scrollContainer.className;
-      scrollContainer.className = "space-y-4"; 
+      scrollContainer.classList.remove('max-h-[500px]', 'overflow-y-auto');
+      scrollContainer.style.height = 'auto'; // Force expansion
+    }
+
+    // Temporarily force Light Mode for an ink-friendly PDF print
+    const wasDark = document.documentElement.classList.contains('dark');
+    if (wasDark) {
+      document.documentElement.classList.remove('dark');
     }
 
     try {
-      await new Promise(resolve => setTimeout(resolve, 50)); 
+      // Wait for layout to settle and Tailwind fade animation to finish
+      await new Promise(resolve => setTimeout(resolve, 400)); 
 
       const elWidth = reportElement.offsetWidth
       const elHeight = reportElement.offsetHeight
 
+      if (elWidth === 0 || elHeight === 0) {
+          throw new Error("UI container lost its dimensions during export.");
+      }
+
       const imgData = await toJpeg(reportElement, { 
-        quality: 0.8, 
-        pixelRatio: 2, 
-        backgroundColor: '#f8fafc' 
+        quality: 0.9, 
+        pixelRatio: 2, // REDUCED TO 2 to prevent "Out of Memory" crashes on large laptops
+        backgroundColor: '#f8fafc',
+        cacheBust: true, // Bypass cross-origin image cache errors
+        style: { fontFamily: 'sans-serif' }
       })
       
       const pdf = new jsPDF({
@@ -226,12 +260,21 @@ export default function App() {
       pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight)
       pdf.save('Propsense_Renovation_Estimate.pdf')
       
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to generate PDF", error)
-      setValidationError("Failed to generate the PDF report. Please try again.")
+      // Display the EXACT error message to the user now
+      setValidationError(`PDF Error: ${error.message || "Memory limit exceeded."} Try again.`)
     } finally {
       if (downloadBtn) downloadBtn.style.display = 'flex'
-      if (scrollContainer) scrollContainer.className = originalClasses; 
+      if (scrollContainer) {
+          scrollContainer.className = originalClasses;
+          scrollContainer.style.height = ''; // Clean up inline style
+      }
+      
+      // Instantly restore Dark Mode if it was active
+      if (wasDark) {
+        document.documentElement.classList.add('dark');
+      }
     }
   }
 
@@ -255,6 +298,7 @@ export default function App() {
     setMaterialMapping({})
     setLiveLogs([])
     setRedesignedImage(null)
+    setActiveTab("original")
     setIsAnalyzing(false)
   }
 
@@ -287,38 +331,56 @@ export default function App() {
   }, [materialMapping, detectedRegions, customRates])
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 p-4 sm:p-6 md:p-8">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-50 p-4 sm:p-6 md:p-8 transition-colors duration-300">
       <div className="max-w-7xl mx-auto space-y-6 md:space-y-8">
         
-        <header className="flex flex-col space-y-2">
-          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-slate-900">
-            Propsense AI Estimator
-          </h1>
-          <p className="text-sm sm:text-base text-slate-500 max-w-2xl">
-            Upload property exteriors to generate redesigned visual options and calculate a transparent renovation cost.
-          </p>
+        <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-2">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight text-slate-900 dark:text-white">
+              Propsense AI Estimator
+            </h1>
+            <p className="text-sm sm:text-base text-slate-500 dark:text-slate-400 max-w-2xl">
+              Upload property exteriors to generate redesigned visual options and calculate a transparent renovation cost.
+            </p>
+          </div>
+
+          <Button 
+            variant="outline" 
+            size="icon" 
+            className="h-10 w-10 self-start sm:self-auto bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
+            onClick={() => setIsDarkMode(!isDarkMode)}
+          >
+            {isDarkMode ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-700"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+            )}
+            <span className="sr-only">Toggle theme</span>
+          </Button>
         </header>
 
         {validationError && (
-          <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-md shadow-sm">
+          <div className="bg-red-50 dark:bg-red-950/50 border-l-4 border-red-500 p-4 rounded-md shadow-sm">
             <div className="flex items-center">
               <svg className="h-5 w-5 text-red-500 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-              <p className="text-sm font-medium text-red-800">{validationError}</p>
+              <p className="text-sm font-medium text-red-800 dark:text-red-300">{validationError}</p>
             </div>
           </div>
         )}
 
-        <div id="report-container" className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 bg-slate-50 rounded-xl p-2 sm:p-4">
+        <div id="report-container" className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 bg-slate-50 dark:bg-slate-900/40 rounded-xl p-2 sm:p-4 transition-colors duration-300">
           
           <div className="col-span-1 lg:col-span-7 space-y-6">
-            <Card className="shadow-sm border-slate-200">
+            
+            {/* Visualization Card */}
+            <Card className="shadow-sm border-slate-200 dark:border-slate-800 dark:bg-slate-900 transition-colors duration-300">
               <CardHeader className="pb-4">
-                <Tabs defaultValue="original" className="w-full">
+                <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <CardTitle className="text-xl">Exterior Visualization</CardTitle>
-                    <TabsList className="bg-slate-100 self-start sm:self-auto">
-                      <TabsTrigger value="original">Original</TabsTrigger>
-                      <TabsTrigger id="tab-redesign" value="redesign" disabled={!redesignedImage}>Redesign</TabsTrigger>
+                    <CardTitle className="text-xl dark:text-white">Exterior Visualization</CardTitle>
+                    <TabsList className="bg-slate-100 dark:bg-slate-800 self-start sm:self-auto">
+                      <TabsTrigger value="original" className="dark:data-[state=active]:bg-slate-950 dark:data-[state=active]:text-white">Original</TabsTrigger>
+                      <TabsTrigger id="tab-redesign" value="redesign" disabled={!redesignedImage} className="dark:data-[state=active]:bg-slate-950 dark:data-[state=active]:text-white">Redesign</TabsTrigger>
                     </TabsList>
                   </div>
 
@@ -327,11 +389,11 @@ export default function App() {
                       <>
                         <TabsContent value="original" className="mt-0">
                           <div className="space-y-4">
-                            <div className="relative w-full h-[350px] sm:h-[450px] bg-slate-900 rounded-lg overflow-hidden border border-slate-200 group flex items-center justify-center">
+                            <div className="relative w-full h-[350px] sm:h-[450px] bg-slate-900 dark:bg-slate-950 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800 group flex items-center justify-center">
                               <img src={selectedImage} alt="Uploaded property" className="w-full h-full object-contain" />
                               
                               {isAnalyzing && (
-                                <div className="absolute inset-0 flex items-center justify-center p-8 w-full h-full bg-slate-900/40">
+                                <div className="absolute inset-0 flex items-center justify-center p-8 w-full h-full bg-slate-900/60">
                                   <svg className="animate-spin h-10 w-10 text-emerald-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                                 </div>
                               )}
@@ -342,7 +404,7 @@ export default function App() {
                             </div>
 
                             {isAnalyzing && liveLogs.length > 0 && (
-                              <div className="w-full bg-black/80 rounded-md p-4 border border-slate-700 font-mono text-xs text-emerald-400 h-32 overflow-y-auto flex flex-col gap-1 text-left animate-in fade-in-0 slide-in-from-bottom-5">
+                              <div className="w-full bg-black/80 dark:bg-black/90 rounded-md p-4 border border-slate-700 dark:border-slate-800 font-mono text-xs text-emerald-400 h-32 overflow-y-auto flex flex-col gap-1 text-left animate-in fade-in-0 slide-in-from-bottom-5">
                                 {liveLogs.map((log, idx) => (
                                   <span key={idx} className="animate-pulse">{log}</span>
                                 ))}
@@ -352,7 +414,7 @@ export default function App() {
                         </TabsContent>
 
                         <TabsContent value="redesign" className="mt-0">
-                          <div className="relative w-full h-[350px] sm:h-[450px] bg-slate-900 rounded-lg overflow-hidden border border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)] flex items-center justify-center">
+                          <div className="relative w-full h-[350px] sm:h-[450px] bg-slate-900 dark:bg-slate-950 rounded-lg overflow-hidden border border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)] flex items-center justify-center">
                             {redesignedImage && <img src={redesignedImage} alt="AI Redesign" className="w-full h-full object-contain" />}
                             <div className="absolute top-4 left-4 bg-emerald-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-md">
                               AI Redesign Generated
@@ -361,111 +423,151 @@ export default function App() {
                         </TabsContent>
                       </>
                     ) : (
-                      <div className="h-[350px] sm:h-[450px] w-full border-2 border-dashed border-slate-300 rounded-lg flex flex-col items-center justify-center bg-slate-50 hover:bg-slate-100 p-6 text-center transition-colors hover:border-slate-400">
-                        <Label htmlFor="file-upload" className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-slate-900 text-slate-50 hover:bg-slate-800 h-10 px-4 py-2 cursor-pointer transition-colors shadow">
+                      <div className="h-[350px] sm:h-[450px] w-full border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 p-6 text-center transition-colors">
+                        <Label htmlFor="file-upload" className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-slate-900 dark:bg-slate-100 text-slate-50 dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-200 h-10 px-4 py-2 cursor-pointer transition-colors shadow">
                           Select Exterior Image
                           <Input id="file-upload" type="file" accept="image/*" className="sr-only" onChange={handleImageUpload} />
                         </Label>
-                        <p className="mt-2 text-xs text-slate-400">Supported formats: JPG, PNG, WEBP</p>
+                        <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">Supported formats: JPG, PNG, WEBP</p>
                       </div>
                     )}
                   </CardContent>
                 </Tabs>
               </CardHeader>
             </Card>
-          </div>
 
-          <div className="col-span-1 lg:col-span-5 space-y-6">
-            <Card className="shadow-sm border-slate-200">
+            {/* Material Mapping Card */}
+            <Card className="shadow-sm border-slate-200 dark:border-slate-800 dark:bg-slate-900 transition-colors duration-300">
               <CardHeader>
-                <CardTitle>Material Mapping</CardTitle>
-                <CardDescription>Assign materials to detected sections.</CardDescription>
+                <CardTitle className="dark:text-white">Material Mapping</CardTitle>
+                <CardDescription className="dark:text-slate-400">Assign materials to detected sections.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
+                
+                {/* 1. Select Target Region */}
                 <div className="space-y-3">
-                  <Label className="font-semibold">1. Select Target Region</Label>
+                  <Label className="font-semibold dark:text-slate-200">1. Select Target Region</Label>
                   <div className="flex flex-wrap gap-2">
                     {detectedRegions.map(region => {
-                      const hasMaterial = !!materialMapping[region.name];
+                      const mappedMaterial = materialMapping[region.name];
+                      const isZeroArea = region.area_sqft === 0;
+
                       return (
-                        <Button key={region.name} variant={activeRegion === region.name ? "default" : "outline"} size="sm" className={`h-8 text-xs ${hasMaterial && activeRegion !== region.name ? 'border-emerald-200 bg-emerald-50' : ''}`} onClick={() => setActiveRegion(region.name)}>
-                          {region.name} ({region.area_sqft} sqft)
-                          {hasMaterial && <span className="ml-2 w-2 h-2 rounded-full bg-emerald-500"></span>}
+                        <Button 
+                          key={region.name} 
+                          disabled={isZeroArea}
+                          variant="outline" 
+                          size="sm" 
+                          className={`h-auto py-1.5 px-3 text-left flex flex-col items-start transition-all ${
+                            activeRegion === region.name 
+                              ? 'bg-slate-200 border-slate-400 shadow-inner dark:bg-slate-700 dark:border-slate-500 dark:text-white' 
+                              : mappedMaterial 
+                                ? 'bg-slate-100 border-slate-300 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-300' 
+                                : 'bg-white dark:bg-slate-950 dark:border-slate-800 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900'
+                          } ${isZeroArea ? 'opacity-50 cursor-not-allowed' : ''}`} 
+                          onClick={() => setActiveRegion(region.name)}
+                        >
+                          <span className="text-xs font-semibold">{region.name} ({region.area_sqft} sqft)</span>
+                          {mappedMaterial && (
+                            <span className={`text-[10px] font-medium ${
+                              activeRegion === region.name 
+                                ? 'text-slate-600 dark:text-slate-300' 
+                                : 'text-slate-500 dark:text-slate-400'
+                            }`}>
+                              ↳ {mappedMaterial}
+                            </span>
+                          )}
                         </Button>
                       )
                     })}
                   </div>
                 </div>
-                <div className="space-y-3 pt-4 border-t border-slate-100">
-                  <Label className="font-semibold">2. Apply Material</Label>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+
+                {/* 2. Apply Material */}
+                <div className="space-y-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                  <Label className="font-semibold dark:text-slate-200">2. Apply Material</Label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {MATERIAL_CATALOG.map(material => (
-                      <Button key={material} variant={activeRegion && materialMapping[activeRegion] === material ? "default" : "outline"} className="text-xs h-9" disabled={!activeRegion || isAnalyzing} onClick={() => handleMaterialSelect(material)}>
+                      <Button 
+                        key={material} 
+                        variant="outline" 
+                        className={`text-xs h-9 transition-all ${
+                          activeRegion && materialMapping[activeRegion] === material 
+                            ? 'bg-slate-200 border-slate-400 font-bold shadow-inner dark:bg-slate-700 dark:border-slate-500 dark:text-white' 
+                            : 'bg-white dark:bg-slate-950 dark:border-slate-800 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900'
+                        }`} 
+                        disabled={!activeRegion || isAnalyzing} 
+                        onClick={() => handleMaterialSelect(material)}
+                      >
                         {material}
                       </Button>
                     ))}
                   </div>
                 </div>
+
               </CardContent>
             </Card>
 
-            <Card className="shadow-sm border-slate-200">
+          </div>
+
+          <div className="col-span-1 lg:col-span-5 space-y-6 h-full">
+            <Card className="shadow-sm border-slate-200 dark:border-slate-800 dark:bg-slate-900 h-full flex flex-col transition-colors duration-300">
               <CardHeader>
-                <CardTitle>Detailed Cost Breakdown</CardTitle>
-                <CardDescription>Adjust market rates to recalculate.</CardDescription>
+                <CardTitle className="dark:text-white">Detailed Cost Breakdown</CardTitle>
+                <CardDescription className="dark:text-slate-400">Adjust market rates to recalculate.</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-6">
+              <CardContent className="space-y-6 flex-1 flex flex-col">
                 
                 {estimateData.lineItems.length === 0 ? (
-                  <div className="text-center p-6 bg-slate-50 text-slate-500 rounded-lg text-sm border border-dashed border-slate-200">
+                  <div className="text-center p-6 bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 rounded-lg text-sm border border-dashed border-slate-200 dark:border-slate-700">
                     Map materials to regions to generate an estimate.
                   </div>
                 ) : (
-                  <div className="space-y-6 flex flex-col">
+                  <div className="space-y-6 flex flex-col flex-1">
                     
-                    <div id="cost-breakdown-scroll" className="max-h-[300px] overflow-y-auto pr-2 space-y-4">
+                    <div id="cost-breakdown-scroll" className="max-h-[500px] overflow-y-auto pr-2 space-y-4 flex-1 custom-scrollbar">
                       {estimateData.lineItems.map((item, idx) => (
-                        <div key={idx} className="p-4 bg-white border border-slate-100 rounded-lg shadow-sm space-y-3">
-                          <div className="flex justify-between items-center border-b border-slate-100 pb-2">
-                            <span className="font-semibold text-slate-800">{item.region} <span className="text-slate-400 font-normal">| {item.material}</span></span>
-                            <span className="font-bold text-emerald-600">₹{item.totalCost.toLocaleString('en-IN', {maximumFractionDigits: 2})}</span>
+                        <div key={idx} className="p-4 bg-white dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-lg shadow-sm space-y-3">
+                          <div className="flex justify-between items-center border-b border-slate-50 dark:border-slate-800 pb-2">
+                            <span className="font-semibold text-slate-800 dark:text-slate-200">{item.region} <span className="text-slate-400 dark:text-slate-500 font-normal">| {item.material}</span></span>
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400">₹{item.totalCost.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
                           </div>
                           
-                          <div className="grid grid-cols-2 gap-4 text-xs text-slate-600">
+                          <div className="grid grid-cols-2 gap-4 text-xs text-slate-600 dark:text-slate-400">
                             <div>
-                              <span className="block text-slate-400">Est. Quantity</span>
-                              <span className="font-medium text-slate-800">{item.quantity} {item.unit}</span>
-                              <span className="block text-[10px]">Inc. {item.wastagePct}% wastage</span>
+                              <span className="block mb-1">Est. Quantity</span>
+                              <span className="font-medium text-slate-900 dark:text-slate-100">{item.quantity} {item.unit}</span>
+                              <span className="block text-[10px] mt-0.5 opacity-70">Inc. {item.wastagePct}% wastage</span>
                             </div>
                             <div>
-                              <span className="block text-slate-400">Rate / Unit (₹)</span>
+                              <span className="block mb-1">Rate / Unit (₹)</span>
                               <Input 
                                 type="number" 
                                 value={customRates[item.material]} 
                                 onChange={(e) => handleRateChange(item.material, e.target.value)}
-                                className="h-6 w-20 text-xs mt-1"
+                                className="h-7 w-20 text-xs px-2 rounded bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-medium focus:bg-white dark:focus:bg-slate-800 transition-colors"
                               />
                             </div>
-                            <div>
-                              <span className="block text-slate-400">Material Cost</span>
-                              <span className="font-medium text-slate-800">₹{item.materialCost.toLocaleString('en-IN', {maximumFractionDigits: 2})}</span>
+                            <div className="pt-2 border-t border-slate-50 dark:border-slate-800/50">
+                              <span className="block mb-1">Material Cost</span>
+                              <span className="font-medium text-slate-900 dark:text-slate-100">₹{item.materialCost.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
                             </div>
-                            <div>
-                              <span className="block text-slate-400">Labor Cost</span>
-                              <span className="font-medium text-slate-800">₹{item.laborCost.toLocaleString('en-IN', {maximumFractionDigits: 2})}</span>
+                            <div className="pt-2 border-t border-slate-50 dark:border-slate-800/50">
+                              <span className="block mb-1">Labor Cost</span>
+                              <span className="font-medium text-slate-900 dark:text-slate-100">₹{item.laborCost.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
                             </div>
                           </div>
                         </div>
                       ))}
                     </div>
 
-                    <div className="flex items-center justify-between pt-4 text-xl font-bold text-slate-900 border-t-2 border-slate-200 mt-auto">
+                    <div className="flex items-center justify-between pt-4 text-xl font-bold text-slate-900 dark:text-white border-t-2 border-slate-200 dark:border-slate-800 mt-auto">
                       <span>Grand Total</span>
-                      <span>₹{estimateData.grandTotal.toLocaleString('en-IN', {maximumFractionDigits: 2})}</span>
+                      <span className="text-emerald-600 dark:text-emerald-400">₹{estimateData.grandTotal.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
                     </div>
 
                     <Button 
-                      className="w-full bg-slate-900 hover:bg-slate-800 text-white shadow-sm mt-4" 
+                      className="w-full bg-slate-900 dark:bg-emerald-600 hover:bg-slate-800 dark:hover:bg-emerald-700 text-white shadow-sm mt-4" 
                       disabled={isAnalyzing || isGeneratingVisual}
                       onClick={handleGenerateVisualization}
                     >
@@ -474,8 +576,8 @@ export default function App() {
                     
                     <Button 
                       id="download-btn"
-                      variant="secondary" 
-                      className="w-full flex items-center justify-center gap-2" 
+                      variant="outline" 
+                      className="w-full flex items-center justify-center gap-2 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800" 
                       disabled={isAnalyzing || estimateData.lineItems.length === 0}
                       onClick={generatePDFReport}
                     >

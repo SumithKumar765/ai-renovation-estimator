@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* 1. Official Tailwind v4 Class-based Dark Mode */
+@variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-border: var(--border);
   --color-input: var(--input);
