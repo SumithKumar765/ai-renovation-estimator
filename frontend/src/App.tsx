@@ -215,12 +215,12 @@ export default function App() {
     const downloadBtn = document.getElementById('download-btn')
     if (downloadBtn) downloadBtn.style.display = 'none'
 
-    // BULLETPROOF SCROLL EXPANSION: Safely remove only the constraints so the grid doesn't collapse
+    // BULLETPROOF SCROLL EXPANSION
     let originalClasses = "";
     if (scrollContainer) {
       originalClasses = scrollContainer.className;
-      scrollContainer.classList.remove('max-h-[500px]', 'overflow-y-auto');
-      scrollContainer.style.height = 'auto'; // Force expansion
+      scrollContainer.classList.remove('max-h-[500px]', 'overflow-y-auto', 'custom-scrollbar');
+      scrollContainer.style.height = 'max-content'; // Allow it to expand fully without breaking flex
     }
 
     // Temporarily force Light Mode for an ink-friendly PDF print
@@ -234,7 +234,7 @@ export default function App() {
       await new Promise(resolve => setTimeout(resolve, 400)); 
 
       const elWidth = reportElement.offsetWidth
-      const elHeight = reportElement.offsetHeight
+      const elHeight = reportElement.scrollHeight // Capture full height
 
       if (elWidth === 0 || elHeight === 0) {
           throw new Error("UI container lost its dimensions during export.");
@@ -242,9 +242,9 @@ export default function App() {
 
       const imgData = await toJpeg(reportElement, { 
         quality: 0.9, 
-        pixelRatio: 2, // REDUCED TO 2 to prevent "Out of Memory" crashes on large laptops
+        pixelRatio: 1.5, // Reduced slightly to prevent strict memory crashes
         backgroundColor: '#f8fafc',
-        cacheBust: true, // Bypass cross-origin image cache errors
+        cacheBust: true,
         style: { fontFamily: 'sans-serif' }
       })
       
@@ -254,21 +254,22 @@ export default function App() {
         format: 'a4'
       })
 
-      const pdfWidth = pdf.internal.pageSize.getWidth()
-      const pdfHeight = (elHeight * pdfWidth) / elWidth
+      // --- NEW MARGIN MATH APPLIED ---
+      const margin = 15; // 15mm border around the edge
+      const pdfWidth = pdf.internal.pageSize.getWidth() - (margin * 2);
+      const pdfHeight = (elHeight * pdfWidth) / elWidth;
 
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight)
+      pdf.addImage(imgData, 'JPEG', margin, margin, pdfWidth, pdfHeight)
       pdf.save('Propsense_Renovation_Estimate.pdf')
       
     } catch (error: any) {
       console.error("Failed to generate PDF", error)
-      // Display the EXACT error message to the user now
       setValidationError(`PDF Error: ${error.message || "Memory limit exceeded."} Try again.`)
     } finally {
       if (downloadBtn) downloadBtn.style.display = 'flex'
       if (scrollContainer) {
           scrollContainer.className = originalClasses;
-          scrollContainer.style.height = ''; // Clean up inline style
+          scrollContainer.style.height = ''; 
       }
       
       // Instantly restore Dark Mode if it was active
