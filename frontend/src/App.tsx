@@ -120,7 +120,7 @@ export default function App() {
     try {
       const compressedBase64 = await compressImage(file)
       
-      const ws = new WebSocket("ws://localhost:8000/ws/analyze")
+      const ws = new WebSocket("wss://ai-renovation-estimator-2.onrender.com/ws/analyze")
       wsRef.current = ws
 
       ws.onopen = () => {
@@ -187,7 +187,7 @@ export default function App() {
       formData.append("image", compressedBase64)
       formData.append("materials", JSON.stringify(materialMapping))
 
-      const res = await fetch("http://localhost:8000/api/visualize", {
+      const res = await fetch("https://ai-renovation-estimator-2.onrender.com/api/visualize", {
         method: "POST",
         body: formData
       })
