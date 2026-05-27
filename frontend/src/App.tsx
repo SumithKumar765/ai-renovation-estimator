@@ -545,7 +545,7 @@ export default function App() {
                               <Input 
                                 type="number" 
                                 value={customRates[item.material]} 
-                                onChange={(e) => handleRateChange(item.material, e.target.value)}
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleRateChange(item.material, e.target.value)}
                                 className="h-7 w-20 text-xs px-2 rounded bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-medium focus:bg-white dark:focus:bg-slate-800 transition-colors"
                               />
                             </div>
