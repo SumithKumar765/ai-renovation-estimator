@@ -526,7 +526,7 @@ export default function App() {
                 ) : (
                   <div className="space-y-6 flex flex-col flex-1">
                     
-                    <div id="cost-breakdown-scroll" className="max-h-[500px] overflow-y-auto pr-2 space-y-4 flex-1 custom-scrollbar">
+                    <div id="cost-breakdown-scroll" className="max-h-[500px] overflow-y-auto pr-2 space-y-4 custom-scrollbar">
                       {estimateData.lineItems.map((item, idx) => (
                         <div key={idx} className="p-4 bg-white dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-lg shadow-sm space-y-3">
                           <div className="flex justify-between items-center border-b border-slate-50 dark:border-slate-800 pb-2">
@@ -560,12 +560,13 @@ export default function App() {
                           </div>
                         </div>
                       ))}
+
+                      <div className="flex items-center justify-between pt-4 text-xl font-bold text-slate-900 dark:text-white border-t-2 border-slate-200 dark:border-slate-800">
+                        <span>Grand Total</span>
+                        <span className="text-emerald-600 dark:text-emerald-400">₹{estimateData.grandTotal.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                      </div>
                     </div>
 
-                    <div className="flex items-center justify-between pt-4 text-xl font-bold text-slate-900 dark:text-white border-t-2 border-slate-200 dark:border-slate-800 mt-auto">
-                      <span>Grand Total</span>
-                      <span className="text-emerald-600 dark:text-emerald-400">₹{estimateData.grandTotal.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-                    </div>
 
                     <Button 
                       className="w-full bg-slate-900 dark:bg-emerald-600 hover:bg-slate-800 dark:hover:bg-emerald-700 text-white shadow-sm mt-4" 
