@@ -22,7 +22,7 @@ app = FastAPI(title="Propsense AI Renovation API")
 # Configure CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -94,7 +94,7 @@ async def _call_groq(raw_base64: str) -> str:
     """Fallback: Llama 4 Maverick on Groq — kicks in on Gemini quota errors."""
     response = await asyncio.to_thread(
         groq_client.chat.completions.create,
-        model="meta-llama/llama-4-maverick-17b-128e-instruct",
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
         temperature=0.2,
         max_tokens=1024,
         messages=[
