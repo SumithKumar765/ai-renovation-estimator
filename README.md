@@ -177,4 +177,4 @@ Unauthorized copying, distribution, or modification is not permitted.
 
 ---
 
-<p align="center">Built with ❤️ by the Propsense Team</p>
+<p align="center">Built with ❤️ by Sumith kumar </p>
