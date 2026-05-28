@@ -215,12 +215,12 @@ export default function App() {
     const downloadBtn = document.getElementById('download-btn')
     if (downloadBtn) downloadBtn.style.display = 'none'
 
-    // BULLETPROOF SCROLL EXPANSION
+    // 1. Expand the scrollable area so all items are visible
     let originalClasses = "";
     if (scrollContainer) {
       originalClasses = scrollContainer.className;
       scrollContainer.classList.remove('max-h-[500px]', 'overflow-y-auto', 'custom-scrollbar');
-      scrollContainer.style.height = 'max-content'; // Allow it to expand fully without breaking flex
+      scrollContainer.style.height = 'max-content';
     }
 
     // Temporarily force Light Mode for an ink-friendly PDF print
@@ -230,22 +230,33 @@ export default function App() {
     }
 
     try {
-      // Wait for layout to settle and Tailwind fade animation to finish
+      // Wait for layout to settle and Tailwind animations to finish
       await new Promise(resolve => setTimeout(resolve, 400)); 
 
-      const elWidth = reportElement.offsetWidth
-      const elHeight = reportElement.scrollHeight // Capture full height
+      // THE FIX: Define fixed "Desktop" dimensions for the capture
+      const targetWidth = 1024; 
+      const targetHeight = reportElement.scrollHeight; 
 
-      if (elWidth === 0 || elHeight === 0) {
-          throw new Error("UI container lost its dimensions during export.");
-      }
-
+      // 2. Capture using injected styles (applied only to the hidden clone)
       const imgData = await toJpeg(reportElement, { 
         quality: 0.9, 
-        pixelRatio: 1.5, // Reduced slightly to prevent strict memory crashes
+        pixelRatio: 1.5, // Keeps text crisp
+        width: targetWidth,
+        height: targetHeight,
+        style: {
+          // Force the cloned element to expand to desktop width
+          width: `${targetWidth}px`,
+          minWidth: `${targetWidth}px`,
+          height: `${targetHeight}px`,
+          // Reset any responsive scaling that mobile browsers apply
+          transform: 'scale(1)',
+          transformOrigin: 'top left',
+          margin: '0',
+          padding: '20px', // Add a little padding for safety
+          fontFamily: 'sans-serif'
+        },
         backgroundColor: '#f8fafc',
         cacheBust: true,
-        style: { fontFamily: 'sans-serif' }
       })
       
       const pdf = new jsPDF({
@@ -254,10 +265,11 @@ export default function App() {
         format: 'a4'
       })
 
-      // --- NEW MARGIN MATH APPLIED ---
-      const margin = 15; // 15mm border around the edge
+      const margin = 15; 
       const pdfWidth = pdf.internal.pageSize.getWidth() - (margin * 2);
-      const pdfHeight = (elHeight * pdfWidth) / elWidth;
+      
+      // Calculate perfect height based on the desktop-width image we just generated
+      const pdfHeight = (targetHeight * pdfWidth) / targetWidth;
 
       pdf.addImage(imgData, 'JPEG', margin, margin, pdfWidth, pdfHeight)
       pdf.save('Propsense_Renovation_Estimate.pdf')
@@ -266,13 +278,12 @@ export default function App() {
       console.error("Failed to generate PDF", error)
       setValidationError(`PDF Error: ${error.message || "Memory limit exceeded."} Try again.`)
     } finally {
+      // 3. Clean up and restore mobile UI
       if (downloadBtn) downloadBtn.style.display = 'flex'
       if (scrollContainer) {
           scrollContainer.className = originalClasses;
           scrollContainer.style.height = ''; 
       }
-      
-      // Instantly restore Dark Mode if it was active
       if (wasDark) {
         document.documentElement.classList.add('dark');
       }
