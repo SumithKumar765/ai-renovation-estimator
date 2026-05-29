@@ -168,13 +168,5 @@ cd ../frontend
 npm install
 ```
 
----
-
-## 📄 License
-
-This project is **proprietary** and intended exclusively for use by **Propsense**.  
-Unauthorized copying, distribution, or modification is not permitted.
-
----
 
 <p align="center">Built with ❤️ by Sumith kumar </p>
